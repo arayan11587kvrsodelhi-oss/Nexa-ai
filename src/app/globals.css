@@ -1,0 +1,620 @@
+@import "tailwindcss";
+
+/* ============================================================
+   NEXA AI — Your Private AI Workspace
+   Design tokens. Deep obsidian background, graphite surfaces,
+   restrained teal/cyan accent. No gradient soup.
+   ============================================================ */
+
+@theme {
+  /* Obsidian — the deepest layer (app background) */
+  --color-obsidian-950: #05070a;
+  --color-obsidian-900: #080b10;
+  --color-obsidian-850: #0b0f15;
+  --color-obsidian-800: #0e131a;
+
+  /* Graphite — surfaces that sit on obsidian */
+  --color-graphite-900: #10151d;
+  --color-graphite-850: #141a24;
+  --color-graphite-800: #182029;
+  --color-graphite-750: #1d2631;
+  --color-graphite-700: #232d3a;
+  --color-graphite-600: #2c3846;
+
+  /* Teal — the only accent, used sparingly */
+  --color-teal-400: #5eead4;
+  --color-teal-500: #2dd4bf;
+  --color-teal-600: #14b8a6;
+  --color-teal-700: #0d9488;
+  --color-teal-900: #134e4a;
+
+  /* Ink — text ramp */
+  --color-ink-100: #eef2f6;
+  --color-ink-200: #cdd6e0;
+  --color-ink-300: #a7b4c2;
+  --color-ink-400: #7d8b9c;
+  --color-ink-500: #5c6a7a;
+  --color-ink-600: #44515f;
+
+  /* Semantic */
+  --color-danger-500: #f2555a;
+  --color-danger-400: #fb7185;
+  --color-warn-500: #e0a02e;
+  --color-success-500: #34d399;
+
+  --font-sans: var(--font-nexa-sans), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-nexa-mono), ui-monospace, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --radius-panel: 0.875rem;
+  --radius-control: 0.625rem;
+
+  /* Elevation via subtle glow, never heavy drop shadows */
+  --shadow-glow-teal: 0 0 0 1px rgba(45, 212, 191, 0.28),
+    0 0 24px -6px rgba(45, 212, 191, 0.22);
+  --shadow-panel: 0 1px 0 0 rgba(255, 255, 255, 0.03) inset,
+    0 18px 40px -28px rgba(0, 0, 0, 0.9);
+
+  /*
+   * Theme-aware overlays.
+   *
+   * The shell tints its surfaces by compositing these onto the themed base
+   * colour, rather than hard-coding an opaque graphite fill. A hard-coded fill
+   * is identical in light and dark mode by definition — which is exactly the
+   * bug this replaces.
+   */
+  --nexa-tint: 100%;
+  --nexa-panel-tint: color-mix(in oklab, var(--nexa-surface) 70%, transparent);
+  --nexa-bar-tint: color-mix(in oklab, var(--nexa-surface) 55%, transparent);
+  --nexa-overlay-tint: color-mix(
+    in oklab,
+    var(--nexa-surface-raised) 55%,
+    transparent
+  );
+  --nexa-hover-tint: color-mix(
+    in oklab,
+    var(--nexa-text) 8%,
+    transparent
+  );
+  --nexa-active-tint: color-mix(
+    in oklab,
+    var(--nexa-text) 12%,
+    transparent
+  );
+}
+
+/* Feedback washes. Kept separate from the palette so each tint is explicit. */
+:root {
+  --nexa-danger-wash: rgba(242, 85, 90, 0.08);
+  --nexa-danger-wash-line: rgba(242, 85, 90, 0.32);
+  --nexa-warn-wash: rgba(224, 160, 46, 0.09);
+  --nexa-warn-wash-line: rgba(224, 160, 46, 0.32);
+  --nexa-accent-wash: rgba(45, 212, 191, 0.1);
+  --nexa-accent-wash-line: rgba(45, 212, 191, 0.34);
+  --nexa-success-wash: rgba(52, 211, 153, 0.1);
+  --nexa-success-wash-line: rgba(52, 211, 153, 0.3);
+
+  /*
+   * Legible foregrounds for the washes above.
+   *
+   * Contrast is measured against the *composited* backdrop (wash over the app
+   * background), not the wash in isolation — a wash is translucent, so testing
+   * it alone reports a ratio that no real pixel ever has. Values below clear
+   * 4.5:1 in both themes; the audit in qa-contrast.mjs re-checks this.
+   */
+  --nexa-accent-strong: #5eead4;
+  --nexa-success-strong: #6ee7b7;
+  --nexa-warn-strong: #fcd34d;
+  --nexa-danger-strong: #fecaca;
+
+  /* Muted body text on the app background. */
+  --nexa-text-muted: #9aa8b8;
+}
+
+/* ------------------------------------------------------------
+   Base
+   ------------------------------------------------------------ */
+
+:root {
+  color-scheme: dark;
+  --nexa-bg: var(--color-obsidian-950);
+  --nexa-surface: var(--color-graphite-900);
+  --nexa-surface-raised: var(--color-graphite-850);
+  --nexa-border: rgba(255, 255, 255, 0.07);
+  --nexa-border-strong: rgba(255, 255, 255, 0.12);
+  --nexa-text: var(--color-ink-100);
+  --nexa-accent: var(--color-teal-500);
+  /* Text colour that stays legible on top of --nexa-accent. */
+  --nexa-accent-contrast: #04120f;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --nexa-bg: #f7f8fa;
+  --nexa-surface: #ffffff;
+  --nexa-surface-raised: #eef1f5;
+  --nexa-border: rgba(9, 14, 22, 0.09);
+  --nexa-border-strong: rgba(9, 14, 22, 0.16);
+  --nexa-text: #0b1017;
+  --nexa-text-muted: #4d5865;
+  /* Darker teal keeps 4.5:1 against a white surface. */
+  --nexa-accent: #0f766e;
+  --nexa-accent-contrast: #ffffff;
+  --shadow-panel: 0 1px 0 0 rgba(255, 255, 255, 0.6) inset,
+    0 12px 32px -24px rgba(9, 14, 22, 0.5);
+
+  /*
+   * Washes are deliberately faint so the *wash plus a dark foreground* clears
+   * 4.5:1. A stronger wash looks punchier but drops the ratio below the floor —
+   * qa-contrast.mjs measures the composited result in both themes.
+   */
+  --nexa-danger-wash: rgba(190, 30, 40, 0.06);
+  --nexa-danger-wash-line: rgba(190, 30, 40, 0.22);
+  --nexa-warn-wash: rgba(150, 100, 10, 0.08);
+  --nexa-warn-wash-line: rgba(150, 100, 10, 0.24);
+  --nexa-accent-wash: rgba(13, 148, 136, 0.08);
+  --nexa-accent-wash-line: rgba(13, 148, 136, 0.26);
+  --nexa-success-wash: rgba(5, 130, 90, 0.08);
+  --nexa-success-wash-line: rgba(5, 130, 90, 0.24);
+
+  /* Darker foregrounds so 10px labels stay legible on a light surface. */
+  --nexa-accent-strong: #0d5f59;
+  --nexa-success-strong: #04613e;
+  --nexa-warn-strong: #7a4207;
+  --nexa-danger-strong: #9f1239;
+}
+
+* {
+  border-color: var(--nexa-border);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--nexa-bg);
+  color: var(--nexa-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+}
+
+/* A single, quiet ambient wash. Not a gradient soup. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(
+      900px 500px at 12% -8%,
+      rgba(45, 212, 191, 0.055),
+      transparent 62%
+    ),
+    radial-gradient(
+      700px 420px at 96% 4%,
+      rgba(20, 184, 166, 0.035),
+      transparent 60%
+    );
+}
+
+:root[data-theme="light"] body::before {
+  background: radial-gradient(
+    900px 500px at 12% -8%,
+    rgba(13, 148, 136, 0.06),
+    transparent 62%
+  );
+}
+
+/* Focus: visible, consistent, keyboard-first */
+:focus-visible {
+  outline: 2px solid var(--nexa-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: rgba(45, 212, 191, 0.26);
+  color: var(--nexa-text);
+}
+
+/* ------------------------------------------------------------
+   Scrollbars — thin and unobtrusive
+   ------------------------------------------------------------ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.22);
+  background-clip: content-box;
+}
+
+:root[data-theme="light"] *::-webkit-scrollbar-thumb {
+  background-color: rgba(9, 14, 22, 0.18);
+  background-clip: content-box;
+}
+
+/* ------------------------------------------------------------
+   Accessibility: reduced motion
+   ------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .nexa-caret {
+    animation: none !important;
+  }
+}
+
+/* Streaming caret */
+@keyframes nexa-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  95% {
+    opacity: 0.15;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.nexa-caret {
+  display: inline-block;
+  width: 0.5ch;
+  height: 1.05em;
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  background-color: var(--nexa-accent);
+  animation: nexa-blink 1.1s steps(1, end) infinite;
+}
+
+@keyframes nexa-shimmer {
+  0% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0.35;
+  }
+}
+
+.nexa-skeleton {
+  background-color: var(--nexa-surface-raised);
+  border-radius: 0.5rem;
+  animation: nexa-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes nexa-pulse-ring {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.7;
+  }
+  70% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+.nexa-live-ring {
+  position: relative;
+}
+
+.nexa-live-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background-color: currentColor;
+  animation: nexa-pulse-ring 2s ease-out infinite;
+}
+
+@keyframes nexa-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.nexa-enter {
+  animation: nexa-slide-in 0.18s ease-out both;
+}
+
+/* ------------------------------------------------------------
+   Theme-aware surface utilities
+   ------------------------------------------------------------
+   These consume the semantic CSS variables, so they follow light/dark
+   automatically. A hard-coded opaque graphite fill is identical in both
+   themes by definition — that is the bug this replaces.
+   ------------------------------------------------------------ */
+
+/* Sidebar body: translucent panel over the themed background. */
+@utility nexa-panel {
+  background-color: var(--nexa-panel-tint);
+  backdrop-filter: blur(8px);
+}
+
+/* Top bar: slightly more transparent than a panel. */
+@utility nexa-bar {
+  background-color: var(--nexa-bar-tint);
+  backdrop-filter: blur(8px);
+}
+
+/* Inset blocks and secondary cards. */
+@utility nexa-overlay {
+  background-color: var(--nexa-overlay-tint);
+}
+
+/* Navigation rows / list items. The hover rule is plain CSS because a
+   Tailwind v4 @utility name must be alphanumeric — it cannot contain ":hover". */
+@utility nexa-hoverable {
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.nexa-hoverable:hover {
+  background-color: var(--nexa-hover-tint);
+}
+
+.nexa-pressable[aria-current="page"] {
+  background-color: var(--nexa-active-tint);
+}
+
+/* Feedback washes used by ErrorState and inline notices. */
+@utility nexa-wash-danger {
+  background-color: var(--nexa-danger-wash);
+  border-color: var(--nexa-danger-wash-line);
+}
+
+@utility nexa-wash-warning {
+  background-color: var(--nexa-warn-wash);
+  border-color: var(--nexa-warn-wash-line);
+}
+
+@utility nexa-wash-accent {
+  background-color: var(--nexa-accent-wash);
+  border-color: var(--nexa-accent-wash-line);
+}
+
+@utility nexa-wash-success {
+  background-color: var(--nexa-success-wash);
+  border-color: var(--nexa-success-wash-line);
+}
+
+@utility nexa-wash-neutral {
+  background-color: var(--nexa-overlay-tint);
+  border-color: var(--nexa-border);
+}
+
+/* Text/border primitives that follow the theme. */
+@utility nexa-accent-text {
+  color: var(--nexa-accent);
+}
+
+@utility nexa-border {
+  border-color: var(--nexa-border);
+}
+
+@utility nexa-border-strong {
+  border-color: var(--nexa-border-strong);
+}
+
+@utility nexa-text {
+  color: var(--nexa-text);
+}
+
+/* ------------------------------------------------------------
+   Markdown rendering (chat answers)
+   ------------------------------------------------------------ */
+
+.nexa-prose {
+  font-size: 0.9375rem;
+  line-height: 1.72;
+  color: var(--nexa-text);
+  word-break: break-word;
+}
+
+.nexa-prose > * + * {
+  margin-top: 0.85em;
+}
+
+.nexa-prose h1,
+.nexa-prose h2,
+.nexa-prose h3,
+.nexa-prose h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--nexa-text);
+}
+
+.nexa-prose h1 {
+  font-size: 1.35rem;
+}
+.nexa-prose h2 {
+  font-size: 1.15rem;
+}
+.nexa-prose h3 {
+  font-size: 1.02rem;
+}
+.nexa-prose h4 {
+  font-size: 0.94rem;
+  color: var(--nexa-text-muted);
+}
+
+.nexa-prose ul,
+.nexa-prose ol {
+  padding-left: 1.35em;
+}
+.nexa-prose ul {
+  list-style: disc;
+}
+.nexa-prose ol {
+  list-style: decimal;
+}
+.nexa-prose li + li {
+  margin-top: 0.3em;
+}
+.nexa-prose li::marker {
+  color: var(--nexa-text-muted);
+}
+
+.nexa-prose a {
+  color: var(--nexa-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+.nexa-prose a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.nexa-prose blockquote {
+  border-left: 2px solid var(--nexa-border-strong);
+  padding-left: 0.9em;
+  color: var(--nexa-text-muted);
+}
+
+.nexa-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background-color: var(--nexa-surface-raised);
+  border: 1px solid var(--nexa-border);
+  border-radius: 5px;
+  padding: 0.1em 0.36em;
+}
+
+.nexa-prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.nexa-prose pre {
+  margin: 0;
+  overflow-x: auto;
+}
+
+.nexa-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.nexa-prose th,
+.nexa-prose td {
+  border: 1px solid var(--nexa-border);
+  padding: 0.5em 0.7em;
+  text-align: left;
+}
+.nexa-prose th {
+  background-color: var(--nexa-surface-raised);
+  font-weight: 600;
+}
+
+.nexa-prose hr {
+  border: 0;
+  border-top: 1px solid var(--nexa-border);
+}
+
+/* ------------------------------------------------------------
+   Syntax highlighting — restrained, low-chroma
+   ------------------------------------------------------------ */
+
+.nexa-code {
+  color: #d6dee8;
+}
+.nexa-code .tok-comment {
+  color: #5c6a7a;
+  font-style: italic;
+}
+.nexa-code .tok-keyword {
+  color: #7dd3fc;
+}
+.nexa-code .tok-string {
+  color: #6ee7b7;
+}
+.nexa-code .tok-number {
+  color: #fbbf24;
+}
+.nexa-code .tok-function {
+  color: #c4b5fd;
+}
+.nexa-code .tok-type {
+  color: #5eead4;
+}
+.nexa-code .tok-punct {
+  color: #7d8b9c;
+}
+.nexa-code .tok-tag {
+  color: #f9a8d4;
+}
+.nexa-code .tok-attr {
+  color: #fbbf24;
+}
+
+:root[data-theme="light"] .nexa-code {
+  color: #1b2430;
+}
+:root[data-theme="light"] .nexa-code .tok-comment {
+  color: #6b7787;
+}
+:root[data-theme="light"] .nexa-code .tok-keyword {
+  color: #0369a1;
+}
+:root[data-theme="light"] .nexa-code .tok-string {
+  color: #047857;
+}
+:root[data-theme="light"] .nexa-code .tok-number {
+  color: #b45309;
+}
+:root[data-theme="light"] .nexa-code .tok-function {
+  color: #6d28d9;
+}
+:root[data-theme="light"] .nexa-code .tok-type {
+  color: #0f766e;
+}
+:root[data-theme="light"] .nexa-code .tok-punct {
+  color: #56626f;
+}

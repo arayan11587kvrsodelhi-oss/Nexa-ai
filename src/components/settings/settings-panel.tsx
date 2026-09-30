@@ -19,6 +19,7 @@ export function SettingsPanel() {
   const rows = [
     { href: "/settings/models", title: "Models", desc: "Active provider, reachability, discovered models." },
     { href: "/settings/memory", title: "Memory", desc: "Stored preferences, facts, and instructions." },
+    { href: "/settings/api-keys", title: "API keys", desc: "Keys for the OpenAI-compatible /v1 endpoints." },
   ];
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-6">

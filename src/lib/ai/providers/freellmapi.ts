@@ -283,7 +283,30 @@ export class FreeLLMAPIProvider implements ModelProvider {
         };
       }
 
-      const payload: unknown = await res.json().catch(() => null);
+      // A 200 with a body NEXA cannot parse is NOT a healthy provider: we
+      // cannot confirm the endpoint speaks the protocol we expect. Reporting
+      // "connected, 0 models" would be a health claim about something we
+      // never actually read.
+      let payload: unknown = null;
+      let parseFailed = false;
+      try {
+        payload = await res.json();
+      } catch {
+        parseFailed = true;
+      }
+      if (parseFailed) {
+        return {
+          configured: true,
+          models: [],
+          health: {
+            ok: false,
+            status: "unavailable",
+            message: `FreeLLMAPI answered HTTP ${res.status} from ${this.modelsEndpoint} with a body that is not valid JSON, so its API shape could not be verified.`,
+            latencyMs,
+          },
+        };
+      }
+
       const models = parseFreeLLMAPIModelList(payload);
       return {
         configured: true,

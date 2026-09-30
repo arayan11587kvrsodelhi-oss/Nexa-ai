@@ -7,6 +7,7 @@ import { DocumentChunker } from "@/lib/rag/chunker";
 import { LocalEmbeddingService } from "@/lib/rag/embeddings";
 import { SecurityGuard } from "@/lib/security/sanitize";
 import { AuditLogger } from "@/lib/security/audit";
+import { checkFileUploadLimit, rateLimitHeaders } from "@/lib/gateway/rate-limit-guard";
 import { and, desc, eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,24 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser(req);
+
+    // Phase 8.4 — optional project narrowing.
+    //
+    // The `userId` condition is authoritative and is always applied. A
+    // `projectId` supplied by the client is only ever an *additional* narrowing
+    // on top of it — it is never a way to reach anything.
+    //
+    // That matters: if a caller forges another tenant's project id, the query
+    // still requires `documents.userId = <their own id>`, so the result is
+    // simply empty. No extra ownership query is needed, and no information
+    // about the foreign project leaks — the response cannot distinguish
+    // "project does not exist" from "project is not yours", because both are
+    // the same empty list.
+    const projectId = req.nextUrl.searchParams.get("projectId")?.trim() || null;
+
+    const filters = [eq(documents.userId, user.id)];
+    if (projectId) filters.push(eq(documents.projectId, projectId));
+
     const docs = await db
       .select({
         id: documents.id,
@@ -27,7 +46,7 @@ export async function GET(req: NextRequest) {
         createdAt: documents.createdAt,
       })
       .from(documents)
-      .where(eq(documents.userId, user.id))
+      .where(and(...filters))
       .orderBy(desc(documents.createdAt))
       .limit(50);
 
@@ -45,6 +64,35 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser(req);
+
+    // Phase 5.4 — this route is rate limited on both dimensions.
+    //
+    // Verified: it previously had no application-level limit, while every
+    // accepted upload reads up to 20 MB, inserts the whole raw text, chunks
+    // it, and then runs one `generateEmbedding` per chunk before batched
+    // inserts. A loop here is both a CPU/IO amplifier and unbounded storage
+    // growth.
+    //
+    // Placed before `req.formData()` / `req.json()` so a refused request does
+    // not even buffer the body, and before the ownership lookup and every
+    // write. `requireUser` has already resolved the principal, so the bucket
+    // is keyed by a server-derived id and an unauthenticated caller can never
+    // spend a signed-in user's quota.
+    const decision = await checkFileUploadLimit(user.id, req.headers);
+    if (!decision.allowed) {
+      // A limiter-store outage is 503, not 429: reporting an outage as a
+      // throttle would tell clients to slow down and hide a real incident.
+      const storeDown = decision.deniedByStoreFailure;
+      return NextResponse.json(
+        {
+          error: storeDown
+            ? "Uploads are temporarily unavailable. Please retry shortly."
+            : "You are uploading too quickly. Please wait a moment and try again.",
+          code: storeDown ? "DATABASE_UNAVAILABLE" : "RATE_LIMITED",
+        },
+        { status: storeDown ? 503 : 429, headers: rateLimitHeaders(decision) }
+      );
+    }
 
     let name = "";
     let rawContent = "";

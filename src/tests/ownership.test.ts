@@ -75,25 +75,46 @@ function resolveResults(chain: any): unknown[] {
   return rowsFor(q.sql);
 }
 
-const { QueryBuilder } = vi.hoisted(() => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return { QueryBuilder: require("drizzle-orm/pg-core").QueryBuilder as new () => { select: (...a: unknown[]) => unknown; insert: (t: unknown) => unknown; update: (t: unknown) => unknown; delete: (t: unknown) => unknown } };
+const { QueryBuilder, PgInsertBuilder, PgUpdateBuilder, PgDeleteBase, PgDialect } = vi.hoisted(() => {
+  const core = require("drizzle-orm/pg-core");
+  return {
+    QueryBuilder: core.QueryBuilder,
+    PgInsertBuilder: core.PgInsertBuilder,
+    PgUpdateBuilder: core.PgUpdateBuilder,
+    PgDeleteBase: core.PgDeleteBase,
+    PgDialect: core.PgDialect,
+  };
 });
 
 vi.mock("@/db", () => {
-  /** Wrap a drizzle builder so awaiting it resolves scripted rows. */
-  function wrap(target: unknown, results: () => unknown[]): unknown {
+  /** Drizzle needs a dialect to compile SQL; it is never used to connect. */
+  const dialect = new PgDialect();
+  const session = { schema: {}, relations: {} };
+  const resolve = (built: unknown) => resolveResults(built);
+
+  /**
+   * Wrap a drizzle builder so awaiting it resolves scripted rows.
+   *
+   * Phase 5.9: `results` is handed the *live* target, i.e. the query as it
+   * stands when the chain is awaited. It used to be handed the builder captured
+   * at `db.select(...)` time, and `toSQL()` was called on that. A bare
+   * `QueryBuilder.select()` has no `toSQL()` — only the built query does — so
+   * any route that reached a code path the old capture could not compile threw
+   * `chain.toSQL is not a function` inside the mock, surfaced as a 503, and the
+   * real authorization assertion never ran.
+   */
+  function wrap(target: unknown, results: (built: unknown) => unknown[]): unknown {
     return new Proxy(target as object, {
       get(t, prop, _recv) {
         if (prop === "then") {
           return (onFulfilled?: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
-            Promise.resolve(results()).then(onFulfilled, onRejected);
+            Promise.resolve(results(t)).then(onFulfilled, onRejected);
         }
         if (prop === "catch") {
-          return (fn: (e: unknown) => unknown) => Promise.resolve(results()).catch(fn);
+          return (fn: (e: unknown) => unknown) => Promise.resolve(results(t)).catch(fn);
         }
         if (prop === "finally") {
-          return (fn: () => void) => Promise.resolve(results()).finally(fn);
+          return (fn: () => void) => Promise.resolve(results(t)).finally(fn);
         }
         const value = Reflect.get(t, prop, t);
         if (typeof value === "function") {
@@ -105,26 +126,67 @@ vi.mock("@/db", () => {
   }
 
   const fakeDb = {
+    /**
+     * Phase 5.9: the shared rate limiter (`@/lib/gateway/rate-limit`) reaches
+     * PostgreSQL through `db.execute()` with an upsert, not through the query
+     * builder. This mock predates that, so every `db.execute(...)` threw
+     * `is not a function`, the limiter caught it and — correctly, by design —
+     * failed *closed*, and every route answered 503 before its authorization
+     * logic ever ran.
+     *
+     * The result therefore said nothing about ownership; the suite had been
+     * dark since Phase 5.
+     *
+     * This resolves the exact shape the limiter reads (`{ rows: [...] }` for
+     * the node-postgres driver) and always reports a count of 1, which is
+     * inside every policy. The real limiter therefore still runs, still
+     * executes its real logic, and still allows the request — only the
+     * unreachable database is stood in for.
+     */
+    execute: async () => ({
+      rows: [{ count: 1, window_start: Date.now() }],
+      rowCount: 1,
+    }),
     select: (...args: unknown[]) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const chain = (new QueryBuilder() as any).select(...args);
-      return wrap(chain, () => resolveResults(chain));
+      return wrap(chain, (built) => resolveResults(built));
     },
+    // Phase 5.9: `QueryBuilder` only provides `select*`. `insert`, `update` and
+    // `delete` live on the database object and are built from the dedicated
+    // `PgInsertBuilder` / `PgUpdateBuilder` / `PgDeleteBase` classes, so calling
+    // them on a bare `QueryBuilder` threw "is not a function" and every
+    // cross-tenant UPDATE/DELETE assertion aborted with a 500 before the
+    // ownership condition could be checked.
     insert: (table: unknown) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const chain = (new QueryBuilder() as any).insert(table);
-      return wrap(chain, () => resolveResults(chain));
+      /**
+       * Phase 5.9: a real `INSERT ... RETURNING` echoes the row it wrote, and
+       * routes rely on that (`const [inserted] = await db.insert(...)`). The
+       * mock has no store and returned `[]`, so the destructure produced
+       * `undefined` and the route threw — masking the credential-stripping
+       * assertion this test exists to make.
+       */
+      const payload: Record<string, unknown> = {};
+      const builder = new PgInsertBuilder(table, session, dialect);
+      const chained = wrap(builder, (built) => {
+        const scripted = resolveResults(built);
+        return scripted.length > 0 ? scripted : [{ ...payload }];
+      });
+      return new Proxy(chained as object, {
+        get(t, prop, recv) {
+          if (prop === "values") {
+            return (v: Record<string, unknown>) => {
+              Object.assign(payload, v);
+              return (t as { values: (x: unknown) => unknown }).values(v);
+            };
+          }
+          return Reflect.get(t, prop, recv);
+        },
+      });
     },
-    update: (table: unknown) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const chain = (new QueryBuilder() as any).update(table);
-      return wrap(chain, () => resolveResults(chain));
-    },
-    delete: (table: unknown) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const chain = (new QueryBuilder() as any).delete(table);
-      return wrap(chain, () => resolveResults(chain));
-    },
+
+    update: (table: unknown) => wrap(new PgUpdateBuilder(table, session, dialect), resolve),
+    delete: (table: unknown) => wrap(new PgDeleteBase(table, session, dialect), resolve),
   };
 
   return {

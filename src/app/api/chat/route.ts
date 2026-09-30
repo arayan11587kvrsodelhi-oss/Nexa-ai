@@ -1,11 +1,13 @@
 import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { conversations, messages } from "@/db/schema";
-import { Attachment, Citation, ModelProfile, ToolCallItem } from "@/types";
+import { Attachment, Citation, ModelProfile, ProviderType, ToolCallItem } from "@/types";
 import { InferenceService } from "@/lib/ai/inference";
 import { ModelRouter } from "@/lib/ai/router";
 import { isProviderError } from "@/lib/ai/provider-errors";
 import { describeProvider } from "@/lib/ai/providers/factory";
+import { NexaGateway } from "@/lib/gateway/gateway";
+import { GatewayError } from "@/lib/gateway/errors";
 import { RAGRetriever } from "@/lib/rag/retriever";
 import { WebSearchService } from "@/lib/search/web-search";
 import { ToolExecutor } from "@/lib/tools/executor";
@@ -13,6 +15,7 @@ import { MemoryService } from "@/lib/memory/memory-service";
 import { AuditLogger } from "@/lib/security/audit";
 import { requireUser } from "@/lib/auth/guard";
 import { ApiError, toErrorResponse } from "@/lib/api/errors";
+import { checkChatSessionLimit, rateLimitHeaders } from "@/lib/gateway/rate-limit-guard";
 import { and, eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -37,8 +40,45 @@ export async function POST(req: NextRequest) {
 
   try {
     // ---- Authentication (401 when no valid session) ----
+    // Runs first, and is the reason the limiter below can trust `user.id`:
+    // an unauthenticated request is rejected here and never reaches the store,
+    // so it cannot spend a signed-in user's quota.
     const user = await requireUser(req);
 
+    // ---- Rate limiting (Phase 5.2) ----
+    // Placed after authentication and BEFORE anything expensive: before the
+    // body is parsed, before the conversation/user-message rows are written,
+    // and long before `NexaGateway.streamChat`. A throttled request therefore
+    // performs no database write and starts no provider work.
+    //
+    // Charging before body validation is deliberate. A malformed body still
+    // costs quota, so an attacker cannot hammer this endpoint with garbage to
+    // force unbounded conversation/message inserts, and a validation failure
+    // is not a way to obtain free attempts. The validation still runs before
+    // any provider call, so malformed input never reaches a model.
+    const decision = await checkChatSessionLimit(user.id, req.headers);
+    if (!decision.allowed) {
+      // A limiter-store outage is a 503, never a 429: reporting an outage as a
+      // throttle would tell every client to slow down and would hide a real
+      // incident behind ordinary-looking throttling.
+      const storeDown = decision.deniedByStoreFailure;
+      return Response.json(
+        {
+          error: storeDown
+            ? "Chat is temporarily unavailable. Please retry shortly."
+            : "You are sending messages too quickly. Please wait a moment and try again.",
+          code: storeDown ? "UPSTREAM_UNAVAILABLE" : "RATE_LIMITED",
+        },
+        {
+          status: storeDown ? 503 : 429,
+          // Quota headers are omitted for an outage: there is no meaningful
+          // quota to report while the store cannot be read.
+          headers: rateLimitHeaders(decision),
+        }
+      );
+    }
+
+    // ---- Body validation (never reaches a provider) ----
     const body = (await req.json()) as ChatRequestBody;
     const {
       messages: inputMessages = [],
@@ -133,6 +173,16 @@ export async function POST(req: NextRequest) {
 
     // Prepare streaming response
     const encoder = new TextEncoder();
+    // ---- Streaming (SSE) ----
+    // One AbortController bridges the client's disconnect to the provider.
+    // It is created *before* the stream opens so no request can slip through
+    // without cancellation support, and it is passed to the gateway below.
+    const clientAbort = new AbortController();
+    const onClientAbort = () => clientAbort.abort();
+    // `req.signal` is already aborted when the client has gone away, so the
+    // listener is registered with `{ once: true }` and removed when it fires.
+    req.signal.addEventListener("abort", onClientAbort, { once: true });
+
     const stream = new TransformStream();
     const writer = stream.writable.getWriter();
 
@@ -265,37 +315,75 @@ export async function POST(req: NextRequest) {
 
         const fullSystemPrompt = `${baseSystem}${memoryContext}${ragContext}${webContext}`;
 
-        // 7. Stream from active model provider
+        // 7. Stream from the active model provider, through the NEXA gateway.
+        //
+        // The model id is pinned to the user's configured provider so the
+        // gateway cannot send an Ollama profile model to a different provider,
+        // while still being free to fall back if that provider is down.
         await sendEvent({
           type: "action",
           content: `Generating response from the ${describeProvider(activeProvider)}...`,
         });
 
-        const genResult = await InferenceService.streamChat(
-          user.id,
-          {
-            model: routeDecision.modelId,
-            messages: inputMessages,
-            systemPrompt: fullSystemPrompt,
-          },
-          async (ev) => {
-            if (ev.type === "token" && ev.content) {
-              fullAssistantText += ev.content;
-              await sendEvent({ type: "token", content: ev.content });
-            } else if (ev.type === "reasoning" && ev.content) {
-              fullReasoningText += ev.content;
-              await sendEvent({ type: "reasoning", content: ev.content });
-            }
+        // Pinned when the legacy provider maps to a gateway provider id;
+        // otherwise left to the gateway's own deterministic `auto` routing.
+        const pinnedProvider = routeDecision.modelId
+          ? pinProviderId(activeProvider)
+          : null;
+        const gatewayModel =
+          routeDecision.modelId && pinnedProvider
+            ? `${pinnedProvider}/${routeDecision.modelId}`
+            : "auto";
+
+        let selectedModel: string | null = null;
+        let selectedProvider: string | null = null;
+        let routingFallbackUsed = false;
+        let failure: unknown = null;
+
+        for await (const ev of NexaGateway.streamChat({
+          model: gatewayModel,
+          messages: inputMessages.map((m) => ({ role: m.role, content: m.content })),
+          systemPrompt: fullSystemPrompt,
+          stream: true,
+          // Phase 5.2: propagate the client's disconnect to the provider.
+          // Without this, a client could start an inference, immediately abort
+          // the fetch, and leave the model generating to completion — paying
+          // full token cost for output nobody will ever read. The gateway and
+          // its providers already accept `signal`; the route simply was not
+          // passing one.
+          //
+          // Note this is a *cost* control, not a quota control. Quota is
+          // charged above, before any of this, and is deliberately NOT
+          // refunded on abort: otherwise a client could start expensive work
+          // and abort to obtain unlimited effective attempts.
+          signal: clientAbort.signal,
+        })) {
+          if (ev.type === "token" && ev.content) {
+            fullAssistantText += ev.content;
+            await sendEvent({ type: "token", content: ev.content });
+          } else if (ev.type === "reasoning" && ev.content) {
+            fullReasoningText += ev.content;
+            await sendEvent({ type: "reasoning", content: ev.content });
+          } else if (ev.type === "done") {
+            selectedModel = ev.data.model;
+            selectedProvider = ev.data.provider;
+            routingFallbackUsed = ev.data.routing.fallbackUsed;
+          } else if (ev.type === "error") {
+            failure = ev.data ?? new Error(ev.content);
           }
-        );
+        }
+
+        if (failure) {
+          throw failure;
+        }
 
         const latencyMs = Date.now() - start;
         const assistantMessageId = `msg_ast_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
-        // The model that actually served the request (never a guess).
-        const modelUsed = genResult.isDemo
-          ? "NEXA Demo Sandbox Engine"
-          : genResult.modelUsed || routeDecision.modelId;
+        // The model that actually served the request (never a guess). Taken from
+        // the gateway's routing record, which is the only trustworthy source.
+        const modelUsed = selectedModel ?? routeDecision.modelId ?? "unknown";
+        const providerId = selectedProvider ?? activeProvider;
 
         // Save assistant message to DB
         await db.insert(messages).values({
@@ -322,9 +410,12 @@ export async function POST(req: NextRequest) {
             messageId: assistantMessageId,
             conversationId: convId,
             modelUsed,
-            provider: genResult.providerId,
+            provider: providerId,
             latencyMs,
-            isDemo: genResult.isDemo,
+            // The gateway has no simulated provider, so a response reaching this
+            // point was produced by a real model. Kept for client compatibility.
+            isDemo: false,
+            fallbackUsed: routingFallbackUsed,
           },
         });
 
@@ -332,22 +423,34 @@ export async function POST(req: NextRequest) {
           userId: user.id,
           conversationId: convId,
           model: modelUsed,
-          provider: genResult.providerId,
-          isDemo: genResult.isDemo,
+          provider: providerId,
+          isDemo: false,
           latencyMs,
         });
       } catch (err: unknown) {
-        // Provider failures stay provider failures: the message is the
-        // normalized, credential-free explanation, and the code lets the UI
-        // distinguish "provider unavailable" from "demo output".
-        const errorMsg =
-          err instanceof Error ? err.message : "An unexpected error occurred.";
+        // Gateway failures are already normalized, credential-free and
+        // classified, so the classification is forwarded rather than flattened
+        // into a generic message the UI cannot act on.
+        const gatewayError = err instanceof GatewayError ? err : null;
+        const errorMsg = gatewayError
+          ? gatewayError.message
+          : isProviderError(err)
+            ? err.message
+            : "An unexpected error occurred.";
         await sendEvent({
           type: "error",
           content: errorMsg,
-          ...(isProviderError(err)
-            ? { data: { provider_error: err.code, provider: err.providerId } }
-            : {}),
+          ...(gatewayError
+            ? {
+                data: {
+                  provider_error: gatewayError.code,
+                  provider: gatewayError.provider,
+                  category: gatewayError.category,
+                },
+              }
+            : isProviderError(err)
+              ? { data: { provider_error: err.code, provider: err.providerId } }
+              : {}),
         });
       } finally {
         await writer.close();
@@ -363,5 +466,26 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: unknown) {
     return toErrorResponse(err);
+  }
+}
+
+/**
+ * Map NEXA's legacy `ProviderType` onto a gateway provider id, for pinning.
+ *
+ * `custom` is the one lossy case: the legacy type does not record which of the
+ * compatible providers was meant, so it is not pinned at all and the gateway
+ * routes it. That is the safe default — guessing `openai_compatible` could send
+ * a request to a provider the user did not select.
+ */
+function pinProviderId(provider: ProviderType): string | null {
+  switch (provider) {
+    case "ollama":
+    case "openai_compatible":
+    case "vllm":
+    case "freellmapi":
+      return provider;
+    default:
+      // "custom" and "demo" are not gateway provider ids.
+      return null;
   }
 }

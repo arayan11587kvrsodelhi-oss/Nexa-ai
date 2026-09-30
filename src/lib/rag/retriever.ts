@@ -33,21 +33,46 @@ export class RAGRetriever {
     const topK = options.topK ?? 4;
     const minScore = options.minScore ?? 0.25;
 
-    // 1. Fetch eligible documents
-    const docFilters = [];
-    if (options.userId) docFilters.push(eq(documents.userId, options.userId));
+    // 1. Resolve the candidate documents through the ownership filter FIRST.
+    //
+    // Phase 5.8: this resolution used to run ONLY when the caller supplied no
+    // `documentIds`. When one *was* supplied the list was taken verbatim and the
+    // `userId` / `projectId` filters were never applied, so the chunk query ran
+    // against those ids with no ownership condition at all. Any caller able to
+    // name a document id could therefore read another tenant's chunks.
+    //
+    // `/api/chat` is the reachable path: `attachments[].id` arrives straight
+    // from the request body, unvalidated, and is forwarded here as
+    // `documentIds`, and the results are streamed back with the document name
+    // and citations.
+    //
+    // A supplied id is now only ever a *filter* over the caller's own
+    // documents, never a destination. This resolves for every caller, so a new
+    // call site cannot reintroduce the bypass.
+    if (!options.userId) {
+      // Fail closed. Tenant-scoped retrieval without an owner identity is
+      // never meaningful, and treating it as "no filter" is what created the
+      // bypass above.
+      return [];
+    }
+
+    const docFilters = [eq(documents.userId, options.userId)];
     if (options.projectId) docFilters.push(eq(documents.projectId, options.projectId));
 
-    let eligibleDocIds = options.documentIds;
-    if (!eligibleDocIds || eligibleDocIds.length === 0) {
-      const docs = await db
-        .select({ id: documents.id, name: documents.name })
-        .from(documents)
-        .where(docFilters.length > 0 ? and(...docFilters) : undefined)
-        .limit(20);
-
-      eligibleDocIds = docs.map((d) => d.id);
+    const requestedIds = (options.documentIds ?? []).filter(
+      (id): id is string => typeof id === "string" && id.length > 0
+    );
+    if (requestedIds.length > 0) {
+      docFilters.push(inArray(documents.id, requestedIds));
     }
+
+    const docs = await db
+      .select({ id: documents.id, name: documents.name })
+      .from(documents)
+      .where(and(...docFilters))
+      .limit(20);
+
+    const eligibleDocIds = docs.map((d) => d.id);
 
     if (!eligibleDocIds || eligibleDocIds.length === 0) {
       return [];

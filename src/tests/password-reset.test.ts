@@ -3,6 +3,33 @@ import { describe, it, expect, vi } from "vitest";
 import { NextRequest as NextRequestClass } from "next/server";
 import { PasswordResetTokenService, PASSWORD_RESET_TTL_MS } from "@/lib/auth/tokens";
 import { PasswordService } from "@/lib/auth/password";
+import { resolveTestDatabase } from "@/lib/testing/test-database";
+
+/**
+ * Phase 7.1 — this file must never write to the operator's database.
+ *
+ * Line 1 loads `.env` into `process.env`, so `DATABASE_URL` — the configured,
+ * and in a real deployment *production*, database — is present on every
+ * `npm test`. The "live DB round trip" block below inserts real users and real
+ * reset tokens and previously gated only on `if (!DATABASE_URL)`, so it ran
+ * against production data on every normal test run.
+ *
+ * The rule is now: a test may only touch a database explicitly designated by
+ * `NEXA_TEST_DATABASE_URL` / `TEST_DATABASE_URL`, and only if the guard agrees
+ * it is a safe, disposable target. There is no fallback to `DATABASE_URL`.
+ * Without one, the live block skips and says why.
+ *
+ * This runs before `@/db` is imported, because the connection pool is built
+ * lazily on first use and caches the URL it first saw.
+ */
+const TEST_DB = resolveTestDatabase();
+if (TEST_DB.usable) {
+  process.env.DATABASE_URL =
+    process.env.NEXA_TEST_DATABASE_URL ?? process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+}
+/** True only when a safe, explicitly-designated test database is available. */
+const LIVE_DB = TEST_DB.usable;
+
 describe("reset tokens", () => {
   it("creates unique opaque tokens", () => {
     const seen = new Set(Array.from({ length: 50 }, () => PasswordResetTokenService.create()));
@@ -115,7 +142,7 @@ describe("mail abstraction", () => {
 
 describe("live DB round trip", () => {
   it("forgot then reset then reuse fails", async () => {
-    if (!process.env.DATABASE_URL) return;
+    if (!LIVE_DB) return;
     const { db } = await import("@/db");
     const { users, passwordResetTokens } = await import("@/db/schema");
     const { eq } = await import("drizzle-orm");
@@ -203,7 +230,7 @@ describe("live DB round trip", () => {
     }
   });
   it("expired token cannot reset", async () => {
-    if (!process.env.DATABASE_URL) return;
+    if (!LIVE_DB) return;
     const { db } = await import("@/db");
     const { users, passwordResetTokens } = await import("@/db/schema");
     const { eq } = await import("drizzle-orm");

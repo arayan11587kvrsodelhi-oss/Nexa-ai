@@ -1,4 +1,15 @@
-import { pgTable, text, timestamp, boolean, integer, jsonb, real, index, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  timestamp,
+  boolean,
+  integer,
+  bigint,
+  jsonb,
+  real,
+  index,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
 /**
@@ -290,6 +301,108 @@ export const auditLogs = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* NEXA AI Gateway (Phase 17)                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * NEXA API keys for the public OpenAI-compatible `/v1/*` surface.
+ *
+ * Only a hash of the key is stored. The plaintext key is returned exactly once,
+ * at creation, and is never recoverable — the same rule the session table
+ * follows. `keyPrefix` exists so a user can recognise a key in a list without
+ * the secret being present anywhere.
+ */
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull().default("NEXA API key"),
+    /** SHA-256 (peppered) of the raw key, hex encoded. */
+    keyHash: text("key_hash").notNull(),
+    /** Display-only fragment, e.g. `nexa_sk_a1b2c3…`. */
+    keyPrefix: text("key_prefix").notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    requestCount: integer("request_count").notNull().default(0),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("api_keys_key_hash_unique").on(t.keyHash),
+    index("api_keys_user_id_idx").on(t.userId),
+  ]
+);
+
+/**
+ * Last observed health of a provider or of one provider model.
+ *
+ * Durable so a cold serverless instance does not treat a known-bad provider as
+ * healthy. `status` uses the gateway vocabulary (healthy / unavailable /
+ * rate_limited / timeout / authentication_error / provider_error). A row is
+ * only ever written from a real observation.
+ */
+export const providerHealth = pgTable(
+  "provider_health",
+  {
+    /** `${providerId}::${modelId ?? "*"}` */
+    id: text("id").primaryKey(),
+    providerId: text("provider_id").notNull(),
+    /** null = provider-level observation. */
+    modelId: text("model_id"),
+    status: text("status").notNull(),
+    ok: boolean("ok").notNull().default(false),
+    latencyMs: integer("latency_ms"),
+    errorCategory: text("error_category"),
+    message: text("message"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("provider_health_provider_id_idx").on(t.providerId),
+    index("provider_health_status_idx").on(t.status),
+    index("provider_health_checked_at_idx").on(t.checkedAt),
+  ]
+);
+
+/**
+ * Distributed rate-limit buckets.
+ *
+ * PostgreSQL is the rate-limit store because it is the one datastore NEXA
+ * already requires in production, and it is shared by every serverless
+ * instance. An in-process `Map` is not: each instance would enforce its own
+ * quota, so the effective limit would scale with the instance count.
+ *
+ * The window is a fixed bucket identified by `bucketKey` + `windowStart`. The
+ * increment and the window reset happen in ONE statement (see
+ * `lib/gateway/rate-limit.ts`), so concurrent requests cannot both read a
+ * count and then write count+1 and slip past the limit.
+ *
+ * `windowStart` is epoch milliseconds rather than a timestamp: a rate limiter
+ * compares windows arithmetically, and epoch ms is unambiguous about the
+ * timezone and the clock the value came from.
+ *
+ * Rows are opportunistic garbage: each one is rewritten on the next request in
+ * its own window, and `pruneRateLimitBuckets` removes anything stale.
+ */
+export const rateLimitBuckets = pgTable(
+  "rate_limit_buckets",
+  {
+    /** e.g. `v1:key:a1b2…` or `v1:ip:203.0.113.7`. Never a raw API key. */
+    bucketKey: text("bucket_key").primaryKey(),
+    /** Start of the fixed window this counter belongs to, in epoch ms. */
+    windowStart: bigint("window_start", { mode: "number" }).notNull(),
+    /** Requests seen in the current window. */
+    count: integer("count").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("rate_limit_buckets_updated_at_idx").on(t.updatedAt)]
+);
+
+/* ------------------------------------------------------------------ */
 /* Relations — static validation aid for the ownership graph.         */
 /* ------------------------------------------------------------------ */
 
@@ -303,6 +416,11 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   modelConfigs: many(modelConfigs),
   toolCalls: many(toolCalls),
   agentRuns: many(agentRuns),
+  apiKeys: many(apiKeys),
+}));
+
+export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
+  user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
 }));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({

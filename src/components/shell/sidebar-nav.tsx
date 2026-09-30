@@ -4,11 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bot,
+  Brain,
   Boxes,
   FileText,
   FlaskConical,
   FolderKanban,
   MessagesSquare,
+  Search,
   Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -26,6 +28,8 @@ const PRIMARY: NavItem[] = [
   { href: "/chat", label: "Chats", icon: MessagesSquare },
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/files", label: "Files", icon: FileText },
+  { href: "/search", label: "Search", icon: Search },
+  { href: "/memory", label: "Memory", icon: Brain },
   { href: "/models", label: "Models", icon: Boxes },
   { href: "/playground", label: "Playground", icon: FlaskConical },
   { href: "/agents", label: "Agents", icon: Bot },

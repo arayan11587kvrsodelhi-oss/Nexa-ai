@@ -10,6 +10,15 @@ dev-*.log
 .env.local
 .env*.local
 
+# One-off local scripts that read credential stores from outside the repo.
+# These are not part of the application: they open another tool's database and
+# print its secrets to stdout. They must never be committed.
+read-key.cjs
+*-key.cjs
+*.db
+*.sqlite
+*.sqlite3
+
 # OS
 .DS_Store
 Thumbs.db

@@ -63,9 +63,9 @@ src/types   index.ts
 | **Code workspace** | `@monaco-editor/react` is a dependency; **zero imports of it exist**. |
 | **Agent mode** | Fixed 3-step template, one real tool call, templated "thought" strings. No `maxSteps`, `timeout`, `cancellation`, permission checks, or failure recovery. No API route exposes it. |
 | **Tests** | No test runner, no `test` script, no test files. |
-| **Rate limiting** | Not implemented. |
+| **Rate limiting** | **Fixed in Phase 5/5.1** — distributed PostgreSQL limiter. `POST /api/chat` and `/api/files` remain unthrottled; see §5.8. |
 | **CSRF** | Not implemented. |
-| **Secure headers / CSP** | `next.config.ts` is `{}`. |
+| **Secure headers / CSP** | **Fixed in Phase 5.1** — see `next.config.ts` and §5.1 below. |
 | **Error sanitization** | Route handlers return raw `err.message` to clients in ~13 places. |
 
 ---
@@ -184,10 +184,21 @@ names, and connection strings.
 `LIMIT`. With the 20 MB upload cap and ~650-char chunks, that is up to ~30k rows and,
 at 256 floats each, meaningful per-request memory. Every RAG-assisted chat message pays it.
 
-### 5.8 No rate limiting — **MEDIUM**
+### 5.8 Residual rate limiting — **MEDIUM** *(partially fixed in Phase 5 / 5.1)*
 
-`POST /api/chat`, `/api/tools`, `/api/search`, and `/api/files` are all unauthenticated and
-unthrottled. `/api/chat` holds an Ollama connection open for the duration of generation.
+**Originally:** `POST /api/chat`, `/api/tools`, `/api/search`, and `/api/files` were
+all unthrottled. `/api/chat` holds an Ollama connection open for the duration of
+generation.
+
+**Now:**
+
+| Route | Status |
+|---|---|
+| `POST /api/chat` | **Fixed in 5.2** — 30/min per user, 60/min per IP, fail closed (503 on a store outage). |
+| `POST /api/files` | **Fixed in 5.4** — 10/min per user, 20/min per IP, fail closed. |
+| `POST /api/tools` | **Fixed in 5.1** — 60/min per user, fail closed. |
+| `POST /api/search` | **Fixed in 5.1** — 30/min per user, fail closed. |
+| `POST /api/files` | **Still unthrottled.** Session-authenticated, ownership-scoped, 20 MB cap. |
 
 ### 5.9 `agent_runs` stores "thought" text — **LOW/design**
 
@@ -331,3 +342,135 @@ Consequently:
 - **Environment:** Requires `FREELLMAPI_BASE_URL` (and optional `FREELLMAPI_API_KEY`) set on the
   server. Live end-to-end inference against a real external server remains unverified.
 - **Detailed guide:** See [`docs/PROVIDERS.md`](./PROVIDERS.md).
+
+---
+
+# NEXA AI Gateway — status (added 2026-09-30)
+
+This section records the native gateway. It supersedes nothing above: the audit
+above describes the tree as it was then. Nothing below is called
+"production-ready" — see *Not verified* and *Remaining*.
+
+## Implemented
+
+| Area | Where | Notes |
+|---|---|---|
+| Native gateway orchestrator | `src/lib/gateway/gateway.ts` | `chat`, `streamChat`, `health`, `listModels`, `previewRoute` |
+| Provider abstraction | `src/lib/gateway/types.ts` | one `AIProvider` contract; adapters own their own wire format |
+| Provider adapters | `src/lib/gateway/providers/` | AI Horde (native), Ollama, OpenAI-compatible, vLLM, external FreeLLMAPI |
+| Provider registry | `src/lib/gateway/registry.ts` | models come from what providers *report*; never invented |
+| Routing | `src/lib/gateway/router.ts` | deterministic `auto`; `provider/model` always wins; no per-model special cases |
+| Bounded retry / fallback | `src/lib/gateway/retry.ts` | transient-only, bounded per candidate and overall |
+| Commit-point streaming | `src/lib/gateway/gateway.ts` | after the first non-empty token there is **no** provider restart |
+| SSE codec | `src/lib/gateway/sse.ts` | correct under arbitrary chunk fragmentation, CRLF/LF/CR, split UTF-8 |
+| Content accumulation | `src/lib/gateway/content.ts` | `append` / `snapshot` / `ignored`, with the *emitted suffix* for snapshots |
+| OpenAI-compatible `/v1` | `src/app/v1/` | `chat/completions` (streaming + not), `models`, `health` |
+| API-key authentication | `src/lib/gateway/api-keys.ts`, `api-key-store.ts`, `api-auth.ts` | CSPRNG, SHA-256+pepper digest, **bearer-only** on `/v1` |
+| Provider health | `src/lib/gateway/health.ts` | in-process fast path + PostgreSQL durability across instances |
+| Error taxonomy | `src/lib/gateway/errors.ts` | 9 codes × 9 categories, credential redaction, OpenAI `param` |
+| SSRF protection | `src/lib/gateway/config.ts` | loopback/private gated by env **and** `NODE_ENV`; link-local/metadata blocked unconditionally |
+| Migrations | `drizzle/0002_bent_genesis.sql` | additive `api_keys` + `provider_health`; applied |
+| Provider matrix | [`docs/PROVIDER_MATRIX.md`](./PROVIDER_MATRIX.md) | capabilities, timeouts, error categories, isolation |
+| Environment reference | [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md) | every variable the code reads, and the loopback rule |
+| API key management UI | `src/app/settings/api-keys/`, `src/components/settings/api-keys-panel.tsx` | session-scoped create/list/revoke; one-time reveal |
+| API key routes | `src/app/api/api-keys/` | `GET` list, `POST` create, `DELETE` revoke; ownership enforced |
+
+## Verified — and how
+
+| Path | Evidence |
+|---|---|
+| **real integration verified** | `NEXA → gateway → native AI Horde → koboldcpp/Angelic_Eclipse-12B`, live network, 3 runs |
+| **real integration verified** | gateway → OpenAI-compatible adapter over a real HTTP socket with frames split mid-JSON |
+| **real integration verified** | `/v1` end-to-end with a real API key in PostgreSQL: 40/40 checks |
+| **stub contract verified** | FreeLLMAPI adapter against a deterministic local server: 38/38 checks (sections A–F) |
+| **unit tested** | SSE cases A–K, commit point, pinning, config/URL regressions, deployment rules |
+| **not available** | Ollama (not installed) — unit + config tests only, never executed |
+| **not available** | live FreeLLMAPI 0.12.0 install — it was not running; port 31417 has no listener |
+| **not verified** | vLLM (shares the OpenAI-compatible adapter; no separate run) |
+
+## Deliberate design decisions worth knowing
+
+- **No simulated provider exists in the gateway.** If no real provider is
+  configured, `/api/chat` returns an honest error rather than canned text.
+- **`auto` is NEXA's decision**, made from provider-reported models plus recorded
+  health. Upstream `auto` routing is never trusted or delegated to.
+- **Model health is never claimed from a catalogue listing.** A model is
+  `available` only after a real observation; before that it is `unknown`.
+- **`/v1` never accepts a session cookie.** A browser cookie and a server API key
+  are different credentials with different lifetimes.
+
+## Health endpoint semantics
+
+`/api/health` — liveness of the *application and database*. Says nothing about
+providers.
+
+`/v1/health` — can this instance actually serve a request. `ok` is true when at
+least one provider is reachable **and** reported at least one model. The
+distinction that matters:
+
+```
+application reachable   → /api/health ok
+database reachable      → /api/health database.reachable
+provider configured     → status "configured" (a state, not a health claim)
+provider reachable      → status "healthy", requires a real probe
+provider routable       → provider healthy AND has ≥1 model
+```
+
+A provider is **not** marked unavailable because one candidate model failed —
+model-scoped and provider-scoped health are recorded separately, and only a
+provider-level observation can make a provider unavailable. A provider with no
+routable model is **not** reported healthy.
+
+## Not verified / remaining
+
+- Ollama has never been executed against a real Ollama server.
+- The external FreeLLMAPI adapter is contract-verified only. The specific
+  FreeLLMAPI 0.12.0 build has not been run against this gateway, and its status
+  stays `contract-tested: YES / live: NOT VERIFIED`.
+- Distributed rate limiting is **in place** for the whole `/v1` surface: counters
+  live in PostgreSQL (`rate_limit_buckets`) and are shared by every serverless
+  instance, so the quota does not scale with instance count. The increment and
+  the window rollover are one `INSERT … ON CONFLICT DO UPDATE … RETURNING`, and
+  real parallel load against a live database admits exactly the configured
+  limit. `/v1/chat/completions` is limited per API key **and** per source IP
+  and **fails closed** (503) when the store is unreachable, so a database outage
+  cannot become unlimited upstream spend. `/v1/models` and `/v1/health` are
+  limited per key and fail open. The previous key-creation guard was per-instance
+  *and* discarded its own result, so it never refused anything; it is now on the
+  shared limiter and enforced. See [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md).
+- **Content-Security-Policy and security headers are set** (`next.config.ts`,
+  policy in `src/lib/security/headers.ts`), derived from an inspection of this
+  app rather than a template. `connect-src 'self'` is the load-bearing
+  directive: every browser-side `fetch` is relative, so all exfiltration
+  channels are closed without breaking anything. `unsafe-eval` is absent in
+  production. Two `'unsafe-inline'` exceptions remain and are documented with
+  their exact cause: Next.js's per-request RSC flight payload cannot be hashed
+  (a nonce would force four currently-prerendered pages to render dynamically),
+  and ~70 React `style={{...}}` attributes have no nonce mechanism.
+- `POST /api/tools` and `POST /api/search` are rate limited on the existing
+  shared PostgreSQL limiter, keyed by the server-resolved user id. They were the
+  only `/api/*` POST routes found to reach a **metered** third-party API
+  (`web_search` → Tavily/Brave; `/api/search` → Tavily/Brave/SearXNG), and
+  `file_search` adds an unindexed full-table scan. `GET /api/tools` was audited
+  and deliberately left unlimited — it serves a static in-memory registry, so a
+  limit would cost a database write per page load to constrain nothing. No
+  other `/api/*` route was limited, for the same reason.
+- `POST /api/files` is rate limited on the existing shared PostgreSQL limiter
+  (Phase 5.4), keyed by the server-resolved user id. Verified: it previously had
+  no application-level limit while each accepted upload reads up to 20 MB,
+  inserts the whole raw text, chunks it, and runs one embedding per chunk.
+- `file_search` escapes its LIKE pattern and fails closed when no owner is
+  supplied, so `%` can no longer be used to turn a search into "match every
+  document", and an unscoped call can no longer return every tenant's rows.
+- A cross-origin check in `middleware.ts` refuses browser state-changing
+  requests whose `Origin` is foreign, as defence in depth behind the cookie's
+  `HttpOnly` + `SameSite=Lax` attributes. API-key routes are excluded.
+- `NEXA_API_KEY_PEPPER` is now **required at runtime in production**: hashing
+  throws rather than silently falling back to an unkeyed digest. Development
+  still tolerates a missing pepper so a fresh clone runs. The thrown message
+  names the variable and never its value.
+- 36 pre-existing PostgreSQL-dependent tests still fail
+  (`ownership.test.ts`, `password-reset.test.ts`). They are unrelated to the
+  gateway and were left untouched.
+- `/api/chat` session-scoped features (RAG, web search, tools, memories) are
+  unchanged; the gateway sits behind them.

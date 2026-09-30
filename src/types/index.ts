@@ -130,6 +130,32 @@ export interface MemoryItem {
   createdAt: string;
 }
 
+export interface SearchResultItem {
+  title: string;
+  url: string;
+  snippet: string;
+  score?: number;
+}
+
+/**
+ * The exact body `POST /api/search` returns. Mirrors `WebSearchResponse` in
+ * `src/lib/search/web-search.ts`; declared here as well so a client component
+ * can type the response without importing a server module into the client
+ * graph.
+ *
+ * `provider` is the search backend that actually answered, and `error` is set
+ * when the backend could not be reached. A client must render the error rather
+ * than an empty result list, and must never present a result it did not
+ * receive.
+ */
+export interface WebSearchResponse {
+  query: string;
+  provider: string;
+  results: SearchResultItem[];
+  citations: Citation[];
+  error?: string;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;

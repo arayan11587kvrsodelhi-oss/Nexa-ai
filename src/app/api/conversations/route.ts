@@ -3,7 +3,8 @@ import { db } from "@/db";
 import { conversations, messages, projects } from "@/db/schema";
 import { requireUser } from "@/lib/auth/guard";
 import { toErrorResponse, ApiError } from "@/lib/api/errors";
-import { and, desc, eq, ilike } from "drizzle-orm";
+import { and, desc, eq, ilike, sql } from "drizzle-orm";
+import { LIKE_ESCAPE_CHAR, sanitizeLikePattern } from "@/lib/tools/like-pattern";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,19 @@ export async function GET(req: NextRequest) {
 
     // Ownership is enforced in SQL: only this user's rows are ever read.
     const conditions = [eq(conversations.userId, user.id)];
-    if (query) conditions.push(ilike(conversations.title, `%${query}%`));
+    // Phase 5.5: the search term is escaped before it becomes a LIKE pattern.
+    // Interpolated raw, `?q=%` matched every conversation the user owns, and a
+    // guaranteed-match scan never short-circuits. The result set is unchanged
+    // for an ordinary term; only wildcard semantics are removed.
+    //
+    // `ESCAPE` is stated explicitly rather than relying on PostgreSQL's implicit
+    // backslash default. Drizzle's `ilike()` takes no escape argument, so this
+    // is composed with `sql` — the term is still bound as a parameter, never
+    // concatenated into the statement.
+    const term = query ? sanitizeLikePattern(query) : "";
+    if (term) {
+      conditions.push(sql`${conversations.title} ILIKE ${`%${term}%`} ESCAPE ${LIKE_ESCAPE_CHAR}`);
+    }
     if (!includeArchived) conditions.push(eq(conversations.isArchived, false));
 
     const list = await db

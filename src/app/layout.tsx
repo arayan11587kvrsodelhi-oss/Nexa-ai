@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import type { ReactNode } from "react";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { ThemeBootstrap } from "@/components/shell/theme-bootstrap";
@@ -34,11 +35,19 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Phase 5.5: the per-request CSP nonce, set by middleware. Reading request
+  // headers opts this tree into dynamic rendering, which is what allows a
+  // *per-request* nonce — a prerendered page cannot carry one, because the
+  // value would be frozen at build time and immediately stale. Five pages were
+  // previously prerendered (`/login`, `/signup`, `/forgot-password`,
+  // `/reset-password`, `/_not-found`); they now render per request, which for
+  // auth pages is the more correct behaviour anyway.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <ThemeBootstrap />
+        <ThemeBootstrap nonce={nonce} />
       </head>
       <body className={`${sans.variable} ${mono.variable} antialiased`}>
         <a

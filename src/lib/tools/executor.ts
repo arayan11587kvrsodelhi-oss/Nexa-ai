@@ -2,7 +2,13 @@ import { db } from "@/db";
 import { documentChunks, documents, toolCalls } from "@/db/schema";
 import { WebSearchService } from "../search/web-search";
 import { ToolRegistry } from "./registry";
-import { and, eq, ilike, or } from "drizzle-orm";
+import { and, eq, ilike, or, sql } from "drizzle-orm";
+import { LIKE_ESCAPE_CHAR, sanitizeLikePattern } from "./like-pattern";
+
+// Re-exported so existing importers of the executor keep working while the one
+// implementation lives in `./like-pattern` alongside its other caller.
+export { sanitizeLikePattern };
+const ESCAPE_CHAR = LIKE_ESCAPE_CHAR;
 
 export interface ToolExecutionResult {
   toolName: string;
@@ -55,11 +61,37 @@ export class ToolExecutor {
         }
 
         case "file_search": {
-          const q = String(input.query || "");
-          const docFilters = userId ? [eq(documents.userId, userId)] : [];
+          // Phase 5.4 — fail closed when there is no owner.
+          //
+          // `file_search` previously treated a missing `userId` as "no filter",
+          // which meant an unscoped caller received *every* tenant's documents.
+          // The routes always pass the authenticated id, so refusing here costs
+          // nothing and turns a silent data exposure into a safe empty result.
+          if (!userId) {
+            result = { count: 0, matches: [], error: "A document search requires an owner." };
+            break;
+          }
+          // Phase 5.4: the search term is escaped before it becomes a LIKE
+          // pattern.
+          //
+          // It used to be interpolated raw into `%${q}%`, so a caller could
+          // supply `%` and turn "search for this text" into "match every
+          // document" — turning a full-table `ILIKE` scan into a
+          // guaranteed-match scan, while also returning results the user never
+          // asked for. `_` had the same effect one character at a time.
+          const raw = String(input.query || "");
+          const q = sanitizeLikePattern(raw);
+          const docFilters = [eq(documents.userId, userId)];
           if (q) {
+            // `ESCAPE` is stated explicitly rather than relying on PostgreSQL's
+            // implicit backslash default, so the pattern and its escape
+            // character cannot drift apart. Both operands are still bound as
+            // parameters — no part of the term is concatenated into SQL.
             docFilters.push(
-              or(ilike(documents.name, `%${q}%`), ilike(documents.rawContent, `%${q}%`))!
+              or(
+                sql`${documents.name} ILIKE ${`%${q}%`} ESCAPE ${ESCAPE_CHAR}`,
+                sql`${documents.rawContent} ILIKE ${`%${q}%`} ESCAPE ${ESCAPE_CHAR}`
+              )!
             );
           }
           const docs = await db
@@ -79,6 +111,12 @@ export class ToolExecutor {
         }
 
         case "document_reader": {
+          // Phase 5.4 — same fail-closed rule as `file_search`: no owner means
+          // no document, never "any document".
+          if (!userId) {
+            result = { error: "A document read requires an owner." };
+            break;
+          }
           const docId = String(input.documentId || "");
           const chunkIdx = typeof input.chunkIndex === "number" ? input.chunkIndex : undefined;
 

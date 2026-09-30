@@ -15,6 +15,8 @@ import {
   resolveProviderType,
 } from "@/lib/ai/providers/factory";
 import { FreeLLMAPIProvider } from "@/lib/ai/providers/freellmapi";
+import { NexaGateway } from "@/lib/gateway/gateway";
+import { validateProviderUrl } from "@/lib/gateway/config";
 import { requireUser } from "@/lib/auth/guard";
 import { toErrorResponse, ApiError } from "@/lib/api/errors";
 import { and, eq } from "drizzle-orm";
@@ -84,6 +86,15 @@ export async function GET(request: NextRequest) {
       reachability = await adapter.testConnection();
     }
 
+    // The gateway is what actually serves a request now, so the model picker
+    // must not describe a provider the request path would never use. This is
+    // additive: `activeConfig` keeps its exact previous shape for existing UI
+    // consumers, and `gateway` is the honest view of what will really answer.
+    const gateway = await NexaGateway.health().catch((error: unknown) => {
+      console.warn("[nexa] gateway health unavailable:", error);
+      return null;
+    });
+
     return NextResponse.json({
       activeConfig: {
         provider: providerType,
@@ -96,6 +107,27 @@ export async function GET(request: NextRequest) {
       },
       databaseReachable,
       reachability,
+      /**
+       * What the gateway can actually reach right now. `ok: false` with a
+       * message is the honest answer when nothing is configured — the UI must
+       * not present an unconfigured deployment as a working engine.
+       */
+      gateway: gateway
+        ? {
+            ok: gateway.ok,
+            status: gateway.status,
+            message: gateway.message,
+            providerOrder: gateway.providerOrder,
+            models: gateway.models,
+            providers: gateway.providers.map((provider) => ({
+              provider: provider.provider,
+              status: provider.status,
+              ok: provider.ok,
+              message: provider.message,
+              latencyMs: provider.latencyMs,
+            })),
+          }
+        : null,
       models: ModelRegistry.getAll(),
       /** Provider identities and what each one can actually do. No secrets. */
       providers: ProviderRegistry.getAll(),
@@ -131,6 +163,30 @@ export async function POST(req: NextRequest) {
       throw ApiError.badRequest(
         "The FreeLLMAPI endpoint and API key are server-side configuration (FREELLMAPI_BASE_URL / FREELLMAPI_API_KEY) and cannot be set per user."
       );
+    }
+
+    // Phase 5.6 — SSRF, and a *stored* one.
+    //
+    // A user-supplied `baseUrl` used to be persisted verbatim here, and is then
+    // read back and fetched by `GET /api/models` (on every model-picker page
+    // load) and by `/api/chat` on every message. One config write therefore
+    // turned every later request into a server-side request to an address the
+    // user chose — cloud metadata, an internal admin port, anything reachable
+    // from the host. That is strictly worse than the transient case closed in
+    // Phase 5.5, because it persists and re-fires.
+    //
+    // The stored value is validated with the *existing* `validateProviderUrl`
+    // rather than a new helper, so a user-configured endpoint is held to
+    // exactly the same policy the gateway already applies to operator-configured
+    // ones: http/https only, no embedded credentials, never a cloud-metadata
+    // host, and never a private/loopback/link-local target unless the operator
+    // has explicitly set `NEXA_ALLOW_PRIVATE_PROVIDER_HOSTS=true` (or is running
+    // in development, where reaching a local Ollama is the intended workflow).
+    if (typeof baseUrl === "string" && baseUrl.trim()) {
+      const check = validateProviderUrl(baseUrl, { label: "provider endpoint" });
+      if (!check.ok) {
+        throw ApiError.badRequest(check.reason);
+      }
     }
 
     // Deactivate this user's previous active config only.

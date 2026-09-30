@@ -15,6 +15,20 @@
       "when": 1790519345918,
       "tag": "0001_swift_emma_frost",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790706672222,
+      "tag": "0002_bent_genesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790777108484,
+      "tag": "0003_rate_limit_buckets",
+      "breakpoints": true
     }
   ]
 }

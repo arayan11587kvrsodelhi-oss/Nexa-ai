@@ -61,7 +61,17 @@ export class AgentOrchestrator {
       steps.push(step2);
       onStepUpdate?.(step2);
 
-      const toolOutput = await ToolExecutor.execute(step2Action, toolInput);
+      // Phase 5.3: `userId` is now passed through.
+      //
+      // It was omitted, and `ToolExecutor` treats a missing `userId` as
+      // "no ownership filter" rather than "deny" — `file_search` builds
+      // `userId ? [eq(documents.userId, userId)] : []` and then queries with
+      // `.where(undefined)`. The agent's `file_search` therefore returned
+      // documents belonging to *every* user (id, name, mime type, size,
+      // character and chunk counts) whenever a goal contained "search",
+      // "find" or "look up". `requireUser` already resolved this id, so
+      // passing it closes the disclosure at its source.
+      const toolOutput = await ToolExecutor.execute(step2Action, toolInput, undefined, userId);
       step2.toolOutput = toolOutput.result || toolOutput.error;
       step2.status = toolOutput.status === "failed" ? "failed" : "completed";
       onStepUpdate?.(step2);

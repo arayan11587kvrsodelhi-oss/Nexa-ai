@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 interface HealthPayload {
   ok: boolean;
   database: { configured: boolean; reachable: boolean; message: string };
-  engine: { provider: string; baseUrl: string };
+  engine: { provider: string };
 }
 
 interface ModelsPayload {

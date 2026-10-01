@@ -36,18 +36,25 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
-  // Phase 5.5: the per-request CSP nonce, set by middleware. Reading request
-  // headers opts this tree into dynamic rendering, which is what allows a
-  // *per-request* nonce — a prerendered page cannot carry one, because the
-  // value would be frozen at build time and immediately stale. Five pages were
-  // previously prerendered (`/login`, `/signup`, `/forgot-password`,
-  // `/reset-password`, `/_not-found`); they now render per request, which for
-  // auth pages is the more correct behaviour anyway.
-  const nonce = (await headers()).get("x-nonce") ?? undefined;
+  // Phase 5.5: this tree must render **per request**, not be prerendered. The
+  // CSP policy carries a fresh nonce on every response (see `src/middleware.ts`),
+  // so a cached HTML document would ship a stale nonce while the browser
+  // enforces the new one — and the browser would then block every script,
+  // including the React runtime itself. Touching `headers()` is what opts the
+  // tree into dynamic rendering. Five pages used to be prerendered
+  // (`/login`, `/signup`, `/forgot-password`, `/reset-password`,
+  // `/_not-found`), which was incompatible with a per-request nonce.
+  //
+  // The nonce itself is deliberately *not* read or passed down here. Next.js
+  // parses it straight off this same `content-security-policy` request header
+  // and stamps it onto the scripts it emits, `ThemeBootstrap` included, which
+  // is also what keeps React from ever reconciling that browser-managed
+  // attribute. See the comment in `theme-bootstrap.tsx` for the full rationale.
+  await headers();
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <ThemeBootstrap nonce={nonce} />
+        <ThemeBootstrap />
       </head>
       <body className={`${sans.variable} ${mono.variable} antialiased`}>
         <a

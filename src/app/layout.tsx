@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     template: "%s · NEXA AI",
   },
   description:
-    "NEXA AI is a local-first private AI workspace: chat, documents, retrieval, tools and agents running against your own models.",
+    "NEXA AI is a local-first AI workspace: chat, documents, retrieval, tools and agents. Workspace data stays in your configured PostgreSQL database; if an external AI provider is configured, prompts and relevant content are sent to it for inference.",
   applicationName: "NEXA AI",
   robots: { index: false, follow: false },
 };

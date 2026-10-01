@@ -235,10 +235,14 @@ const BASE_PROVIDERS: ProviderRegistration[] = [
     id: "ollama",
     name: "Ollama",
     protocol: "ollama-native",
-    enabled: true,
+    // Not the active engine and not selectable. The adapter is retained (see
+    // `providers/ollama.ts`) so an operator who explicitly addresses Ollama
+    // still gets a real, honest probe, but it is never chosen by default and
+    // is never reported as the deployment's provider.
+    enabled: false,
     baseUrl: null,
     capabilities: { streaming: true, realInference: true, tools: null, vision: null },
-    note: "Local engine. Reachability is probed live; model capabilities come from the discovered catalogue.",
+    note: "Not the active engine. NEXA runs on FreeLLMAPI; Ollama is never selected automatically and is not required.",
   },
   {
     id: "openai_compatible",
@@ -256,7 +260,7 @@ const BASE_PROVIDERS: ProviderRegistration[] = [
     enabled: false,
     baseUrl: null,
     capabilities: { streaming: true, realInference: true, tools: null, vision: null },
-    note: "External provider. Disabled until FREELLMAPI_BASE_URL is configured.",
+    note: "The active engine. Enabled automatically once FREELLMAPI_BASE_URL is configured.",
   },
   {
     id: "demo",
@@ -334,6 +338,9 @@ export class ProviderRegistry {
   /**
    * FreeLLMAPI enablement is environment-driven: `FREELLMAPI_BASE_URL` is the
    * only switch. The API key is deliberately never exposed here.
+   *
+   * This is the provider NEXA serves requests from, so its note is also what
+   * the UI shows as the deployment's engine state.
    */
   private static withEnvironmentState(base: ProviderRegistration): ProviderRegistration {
     const baseUrl = (process.env.FREELLMAPI_BASE_URL ?? "").trim();
@@ -343,7 +350,7 @@ export class ProviderRegistry {
       enabled,
       baseUrl: enabled ? baseUrl : null,
       note: enabled
-        ? "External OpenAI-compatible provider. Availability depends on the configured FreeLLMAPI installation and its provider pool; models are discovered at request time."
+        ? "Active engine. FreeLLMAPI is the provider NEXA serves requests from; models are discovered at request time."
         : "Not configured. Set FREELLMAPI_BASE_URL (and optionally FREELLMAPI_API_KEY) in the server environment to enable it.",
     };
   }

@@ -26,16 +26,39 @@ export const PROVIDER_TYPES: readonly ProviderType[] = [
   "demo",
 ];
 
+/**
+ * The provider NEXA uses when nothing else selects one.
+ *
+ * FreeLLMAPI is the sole default. It is the only provider whose endpoint and
+ * credential are configured on the server, and it is never reached by an
+ * implicit fallback: a FreeLLMAPI failure surfaces as a provider error rather
+ * than silently serving another engine's output.
+ *
+ * This constant is the single place that default is defined. Every
+ * "no provider was specified" path resolves through
+ * `resolveProviderType()`, so changing it here changes the application's
+ * default in one edit instead of leaving `"ollama"` literals scattered across
+ * the routes, the inference service and the router.
+ */
+export const DEFAULT_PROVIDER_TYPE: ProviderType = "freellmapi";
+
 export function isProviderType(value: unknown): value is ProviderType {
   return typeof value === "string" && (PROVIDER_TYPES as readonly string[]).includes(value);
 }
 
 /**
  * Coerce an untrusted provider string (env var or database column) into a known
- * provider, preserving the previous behaviour of treating anything unexpected
- * as Ollama.
+ * provider.
+ *
+ * An unrecognised value resolves to `fallback`, which defaults to
+ * `DEFAULT_PROVIDER_TYPE`. Ollama remains a *selectable* provider — the
+ * abstraction is unchanged and an operator can still address it explicitly —
+ * but it is never the value a missing or malformed setting resolves to.
  */
-export function resolveProviderType(value: unknown, fallback: ProviderType = "ollama"): ProviderType {
+export function resolveProviderType(
+  value: unknown,
+  fallback: ProviderType = DEFAULT_PROVIDER_TYPE
+): ProviderType {
   return isProviderType(value) ? value : fallback;
 }
 

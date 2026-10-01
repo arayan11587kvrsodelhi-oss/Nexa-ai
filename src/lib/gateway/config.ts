@@ -251,10 +251,12 @@ export function resolveProviderOrder(): GatewayProviderId[] {
  *
  * A provider is `enabled` only when it has enough configuration to be called:
  *
- *  - `freellmapi`: FREELLMAPI_BASE_URL set (key optional for a local install)
+ *  - `freellmapi`: FREELLMAPI_BASE_URL set (key optional for a local install).
+ *                  This is NEXA's active engine and the only provider enabled
+ *                  by default.
  *  - `aihorde`:    explicit opt-in (`AI_HORDE_ENABLED=true` or a key/model),
  *                  because it is a third-party service
- *  - `ollama`:     always available; the default base URL is used when unset
+ *  - `ollama`:     never enabled — it is not the active engine
  *  - `openai_compatible`: base URL set (env, or a per-user config row)
  */
 export function loadGatewayConfig(
@@ -293,6 +295,9 @@ export function loadGatewayConfig(
   });
 
   /* Ollama ---------------------------------------------------------------- */
+  // NEXA runs on FreeLLMAPI. The Ollama gateway adapter is retained so an
+  // operator can still address it explicitly, but it is never enabled for
+  // routing: Ollama is not the active engine and is not required to run NEXA.
   const ollamaBase = normalizeBaseUrl(
     overrides.ollama?.baseUrl || env("OLLAMA_BASE_URL") || OLLAMA_DEFAULT_BASE_URL
   );
@@ -300,13 +305,13 @@ export function loadGatewayConfig(
   configs.push({
     id: "ollama",
     name: "Ollama",
-    enabled: ollamaUrl.ok,
+    enabled: false,
     baseUrl: ollamaBase,
     requiresApiKey: false,
     preferredModel: env("OLLAMA_MODEL") || undefined,
     priority: priorityOf("ollama"),
     note: ollamaUrl.ok
-      ? "Local engine. Reachability and the model list are probed before it is used."
+      ? "Disabled: NEXA is served by FreeLLMAPI. Ollama is not the active engine and is not used for routing."
       : `Disabled: ${ollamaUrl.reason}`,
   });
 

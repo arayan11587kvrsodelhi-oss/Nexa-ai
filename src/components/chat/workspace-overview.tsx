@@ -173,7 +173,7 @@ export function WorkspaceOverview() {
           detail={models.detail}
         />
       ) : models.state === "loading" ? (
-        <SetupRow icon={HardDrive} label="Local AI engine" status="checking" detail="Probing provider…" />
+        <SetupRow icon={HardDrive} label="AI engine" status="checking" detail="Probing provider…" />
       ) : isDemo ? (
         <ErrorState
           tone="warning"
@@ -190,7 +190,7 @@ export function WorkspaceOverview() {
       ) : engineOk ? (
         <SetupRow
           icon={HardDrive}
-          label={isExternalProvider ? "Inference engine (external provider)" : "Local AI engine"}
+          label={isExternalProvider ? "AI engine (FreeLLMAPI)" : "AI engine"}
           status="ok"
           detail={
             <>
@@ -257,10 +257,10 @@ export function WorkspaceOverview() {
       <div className="flex items-start gap-2.5 rounded-panel border px-4 py-3" style={{ borderColor: "var(--nexa-border)" }}>
         <ShieldCheck className="mt-0.5 size-4 shrink-0 nexa-accent-text" aria-hidden />
         <p className="text-[11px] leading-relaxed nexa-muted">
-          NEXA AI runs entirely on your machine. Prompts, documents, embeddings
-          and conversation history stay in your own PostgreSQL database, and no
-          request leaves this host unless you explicitly enable an external
-          provider or web search.
+          NEXA AI keeps your workspace data in your configured PostgreSQL database.
+          When FreeLLMAPI is active, prompts and any retrieved document excerpts
+          included with them are sent to the configured FreeLLMAPI installation and
+          its provider pool. Web search is only used when explicitly enabled.
         </p>
       </div>
     </div>

@@ -231,14 +231,25 @@ describe("model router", () => {
     expect(explicit.providerId).toBe("freellmapi");
     expect(explicit.explicit).toBe(true);
 
+    // With nothing requested and DEFAULT_PROVIDER unset, the default is
+    // FreeLLMAPI. It used to be Ollama, which meant a deployment with no
+    // provider configured silently probed a local engine that is not running.
     const byDefault = ModelRouter.selectProvider();
-    expect(byDefault.provider).toBeInstanceOf(OllamaProvider);
-    expect(byDefault.providerId).toBe("ollama");
+    expect(byDefault.provider).toBeInstanceOf(FreeLLMAPIProvider);
+    expect(byDefault.providerId).toBe("freellmapi");
     expect(byDefault.explicit).toBe(false);
+    expect(byDefault.provider).not.toBeInstanceOf(OllamaProvider);
     expect(byDefault.provider).not.toBeInstanceOf(DemoSandboxProvider);
 
     process.env.DEFAULT_PROVIDER = "freellmapi";
     expect(ModelRouter.selectProvider().provider).toBeInstanceOf(FreeLLMAPIProvider);
+
+    // An explicit request for a different provider is still honoured — the
+    // abstraction is unchanged, only the default moved.
+    const explicitOllama = ModelRouter.selectProvider("ollama");
+    expect(explicitOllama.provider).toBeInstanceOf(OllamaProvider);
+    expect(explicitOllama.providerId).toBe("ollama");
+    expect(explicitOllama.explicit).toBe(true);
 
     const demo = ModelRouter.selectProvider("demo");
     expect(demo.provider).toBeInstanceOf(DemoSandboxProvider);

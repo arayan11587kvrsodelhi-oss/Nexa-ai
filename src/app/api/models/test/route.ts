@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
         `Unsupported provider '${String(provider)}'. Supported providers: ${PROVIDER_TYPES.join(", ")}.`
       );
     }
-    const providerType = resolveProviderType(provider, "ollama");
+    const providerType = resolveProviderType(provider);
 
     // Phase 5.5 — SSRF: the endpoint is server-side configuration, never a
     // request value.

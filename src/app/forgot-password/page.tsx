@@ -122,7 +122,9 @@ function ForgotPasswordForm() {
         </form>
         <p className="mt-6 flex items-center justify-center gap-1.5 text-[11px] nexa-muted">
           <ShieldCheck className="size-3.5 nexa-accent-text" aria-hidden />
-          Local-first. Your data never leaves this machine unless you choose an external provider.
+          Local-first workspace. Your stored workspace data remains in your configured
+          PostgreSQL database. If an external AI provider is configured, prompts and
+          relevant content may be sent to that provider for inference.
         </p>
       </div>
     </div>

@@ -100,7 +100,7 @@ export class ModelRouter {
         reason: `Provider '${requestedProvider}' was selected explicitly.`,
       };
     }
-    const configured = resolveProviderType(process.env.DEFAULT_PROVIDER, "ollama");
+    const configured = resolveProviderType(process.env.DEFAULT_PROVIDER);
     return {
       provider: createProvider(configured, overrides),
       providerId: configured,

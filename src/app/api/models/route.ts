@@ -44,9 +44,10 @@ export async function GET(request: NextRequest) {
     }
 
     const providerType = resolveProviderType(
-      activeConfig?.provider || process.env.DEFAULT_PROVIDER || "ollama"
+      activeConfig?.provider || process.env.DEFAULT_PROVIDER
     );
-    // FreeLLMAPI's endpoint is server-side environment configuration only.
+    // FreeLLMAPI's endpoint and model are server-side environment configuration
+    // only, and its model is never defaulted to an Ollama model id.
     const baseUrl =
       providerType === "freellmapi"
         ? (process.env.FREELLMAPI_BASE_URL ?? "").trim()
@@ -154,7 +155,7 @@ export async function POST(req: NextRequest) {
         `Unsupported provider '${String(provider)}'. Supported providers: ${PROVIDER_TYPES.join(", ")}.`
       );
     }
-    const providerType = resolveProviderType(provider, "ollama");
+    const providerType = resolveProviderType(provider);
 
     // FreeLLMAPI is configured on the server, not per user: its endpoint is a
     // request-forgery surface and its key must never be persisted in plaintext

@@ -51,7 +51,7 @@ export class InferenceService {
     }
 
     const provider = resolveProviderType(
-      configRecord?.provider || process.env.DEFAULT_PROVIDER || "ollama"
+      configRecord?.provider || process.env.DEFAULT_PROVIDER
     );
 
     const baseUrl =
@@ -59,6 +59,11 @@ export class InferenceService {
         ? (process.env.FREELLMAPI_BASE_URL ?? "").trim()
         : configRecord?.baseUrl || process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 
+    // FreeLLMAPI's model comes from server configuration only. There is
+    // deliberately no Ollama-shaped fallback on this branch: a FreeLLMAPI
+    // request must never be sent a model id belonging to a different engine
+    // (e.g. `llama3.2:3b`), and the provider itself is the source of truth for
+    // the ids it will accept.
     const modelName =
       provider === "freellmapi"
         ? configRecord?.modelName?.trim() || (process.env.FREELLMAPI_MODEL ?? "").trim()

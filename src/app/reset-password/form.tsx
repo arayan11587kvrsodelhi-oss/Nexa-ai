@@ -89,7 +89,7 @@ export function ResetForm() {
           )}
           <p className="mt-4 text-center text-xs nexa-muted"><Link href="/login" className="text-teal-400 hover:underline">Back to sign in</Link></p>
         </form>
-        <p className="mt-6 flex items-center justify-center gap-1.5 text-[11px] nexa-muted"><ShieldCheck className="size-3.5 nexa-accent-text" aria-hidden />Local-first. Your data never leaves this machine.</p>
+        <p className="mt-6 flex items-center justify-center gap-1.5 text-center text-[11px] nexa-muted"><ShieldCheck className="size-3.5 shrink-0 nexa-accent-text" aria-hidden />Local-first workspace. Your stored workspace data remains in your configured PostgreSQL database. If an external AI provider is configured, prompts and relevant content may be sent to that provider for inference.</p>
       </div>
     </div>
   );

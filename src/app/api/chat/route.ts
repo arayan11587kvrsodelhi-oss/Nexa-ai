@@ -111,7 +111,10 @@ export async function POST(req: NextRequest) {
         id: convId,
         userId: user.id,
         title,
-        model: requestedModel || "llama3.2:3b",
+        // NEXA is served by FreeLLMAPI, so a new conversation is labelled with
+        // the configured FreeLLMAPI model rather than an Ollama model id. The
+        // routing decision below still chooses the model actually sent.
+        model: requestedModel || (process.env.FREELLMAPI_MODEL ?? "").trim() || "auto",
         profile: requestedProfile || "BALANCED",
         projectId: projectId || null,
       });

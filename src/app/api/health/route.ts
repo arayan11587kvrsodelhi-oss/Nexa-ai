@@ -1,4 +1,5 @@
 import { checkDatabase } from "@/db";
+import { resolveProviderType } from "@/lib/ai/providers/factory";
 
 export const dynamic = "force-dynamic";
 
@@ -20,18 +21,14 @@ export const dynamic = "force-dynamic";
  * The coarse `provider` name is kept — it is a fingerprint, not a location,
  * and it is what makes this endpoint useful for diagnostics. The endpoint
  * itself is not returned.
+ *
+ * The provider identity is resolved through the shared
+ * `resolveProviderType()` so this probe can never name a different default than
+ * the one inference actually uses.
  */
 function getEngineConfig() {
-  const provider = (
-    process.env.DEFAULT_PROVIDER ?? "ollama"
-  ).trim().toLowerCase();
-
-  switch (provider) {
-    case "freellmapi":
-    case "ollama":
-    default:
-      return { provider };
-  }
+  const provider = resolveProviderType(process.env.DEFAULT_PROVIDER);
+  return { provider };
 }
 
 /**

@@ -44,7 +44,7 @@ export class DemoSandboxProvider implements ModelProvider {
       const thoughts = [
         "Analyzing user inquiry in NEXA Private AI Workspace...\n",
         "Inspecting context, active memory, and tool permissions...\n",
-        "Synthesizing structured response adhering to local privacy constraints...\n",
+        "Synthesizing structured response adhering to configured privacy constraints...\n",
       ];
       for (const t of thoughts) {
         reasoningText += t;
@@ -59,10 +59,14 @@ export class DemoSandboxProvider implements ModelProvider {
     if (lower.includes("hello") || lower.includes("hi") || lower.includes("hey")) {
       responseText = `**Hello! Welcome to NEXA AI — Your Private AI Workspace.**
 
-[DEMO MODE NOTICE]: You are currently connected to the local UI Sandbox Engine. For production inference with 100% privacy and zero subscription fees:
-1. Start your local Ollama server: \`ollama serve\`
-2. Pull your model: \`ollama pull llama3.2\` or \`ollama pull deepseek-r1:8b\`
-3. Select your model profile in the top selector.
+[DEMO MODE NOTICE]: You are currently connected to the local UI Sandbox Engine, which returns canned text rather than real model output. Responses are not produced by a model.
+
+To use real inference, configure FreeLLMAPI on the server:
+1. Set \`FREELLMAPI_BASE_URL\` to your FreeLLMAPI installation, and \`FREELLMAPI_API_KEY\` if it requires one.
+2. Set \`FREELLMAPI_MODEL\` to a model id your installation reports via \`GET /v1/models\`.
+3. Restart NEXA, then open Models to confirm the engine is reachable.
+
+Note: when an external AI provider is configured, prompts and relevant content are sent to it for inference. Your stored workspace data stays in your configured PostgreSQL database.
 
 How can I assist you with your code, documents, or research today?`;
     } else if (
@@ -121,19 +125,19 @@ export async function processStream(
 | **Vision** | \`llama3.2-vision:11b\` | ~12 GB | Chart reading, OCR, diagram comprehension |
 | **Long Context**| \`qwen2.5:14b\` (128k) | ~14 GB | Multi-file codebases, book-length document RAG |
 
-*All models run 100% offline via your local Ollama or vLLM daemon.*`;
+*These are illustrative local-model profiles. NEXA AI is served by FreeLLMAPI; the models actually available are those your configured installation reports via \`GET /v1/models\`.*`;
     } else {
       responseText = `I have received your request:
 
 > "${lastMsg.slice(0, 160)}${lastMsg.length > 160 ? "..." : ""}"
 
-**NEXA AI** is designed to process tasks with total privacy. All data, conversations, uploaded files, and vector embeddings reside on this local machine.
+**NEXA AI** is a local-first workspace. Your stored workspace data remains in your configured PostgreSQL database. If an external AI provider is configured, prompts and relevant content may be sent to that provider for inference.
 
-- **Status**: Engine active (Demo Sandbox)
-- **Local Engine**: Connect Ollama (\`http://localhost:11434\`) to run unquantized or quantized open-source weights.
+- **Status**: Demo Sandbox active (canned text, not model output)
+- **Real inference**: configure FreeLLMAPI on the server (\`FREELLMAPI_BASE_URL\`, \`FREELLMAPI_API_KEY\`, \`FREELLMAPI_MODEL\`).
 - **Available Capabilities**: RAG Document Intelligence, Monaco Coding Workspace, Multi-step Autonomous Agents, and Memory Management.
 
-Would you like me to inspect code, parse documents, run a calculation, or help you configure your local model?`;
+Would you like me to inspect code, parse documents, run a calculation, or help you configure your AI provider?`;
     }
 
     // Stream tokens in small chunks

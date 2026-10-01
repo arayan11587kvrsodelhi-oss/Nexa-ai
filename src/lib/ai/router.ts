@@ -2,6 +2,7 @@ import { Attachment, ModelProfile, ProviderType } from "@/types";
 import { ModelRegistry, ProviderRegistry } from "./registry";
 import { ModelProvider } from "./types";
 import { createProvider, resolveProviderType } from "./providers/factory";
+import { loadGatewayConfig } from "@/lib/gateway/config";
 
 export interface RoutingDecision {
   profile: ModelProfile;
@@ -20,6 +21,41 @@ export interface RoutingDecision {
 }
 
 export class ModelRouter {
+  /**
+   * Cached result of the FreeLLMAPI preferred-model lookup, keyed on the raw
+   * environment value. Cached because `loadGatewayConfig` normalizes and
+   * validates URLs on every call; the key means a changed environment is still
+   * picked up immediately, so this can never serve a stale value.
+   */
+  private static preferredModelCache: { key: string; value: string | undefined } | null = null;
+
+  /**
+   * The operator-configured FreeLLMAPI model, or `undefined` when none is set.
+   *
+   * Deliberately sourced from `loadGatewayConfig()` rather than reading
+   * `process.env.FREELLMAPI_MODEL` directly: that loader is already the single
+   * place in the codebase that interprets provider environment variables, and
+   * reusing it avoids a second, potentially divergent parser.
+   *
+   * Never throws: a configuration that cannot be read simply means "no
+   * preference", which preserves the pre-existing first-discovered behaviour.
+   */
+  private static resolvePreferredFreeLLMAPIModel(): string | undefined {
+    const raw = process.env.FREELLMAPI_MODEL ?? "";
+    if (this.preferredModelCache?.key === raw) {
+      return this.preferredModelCache.value;
+    }
+    let value: string | undefined;
+    try {
+      const entry = loadGatewayConfig().find((config) => config.id === "freellmapi");
+      const preferred = entry?.preferredModel?.trim();
+      value = preferred ? preferred : undefined;
+    } catch {
+      value = undefined;
+    }
+    this.preferredModelCache = { key: raw, value };
+    return value;
+  }
   /**
    * Route a request.
    *
@@ -85,7 +121,24 @@ export class ModelRouter {
     const catalog = ProviderRegistry.getDiscoveredModels("freellmapi");
     const explicitModel =
       requestedModel && catalog.some((m) => m.id === requestedModel) ? requestedModel : undefined;
-    const chosen = explicitModel ? catalog.find((m) => m.id === explicitModel) : catalog[0];
+
+    // Operator/server configuration, not request input: FREELLMAPI_MODEL is read
+    // through the existing gateway configuration loader rather than being parsed
+    // again here, so there is exactly one place that interprets it. A value from
+    // a request body never reaches this branch.
+    const preferredModel = this.resolvePreferredFreeLLMAPIModel();
+
+    // The configured model is honoured only when FreeLLMAPI actually reported it.
+    // An id that is absent from the discovered catalog is not treated as valid —
+    // NEXA would otherwise send a model the provider never advertised.
+    const configuredModel =
+      preferredModel && catalog.some((m) => m.id === preferredModel) ? preferredModel : undefined;
+
+    const chosen = explicitModel
+      ? catalog.find((m) => m.id === explicitModel)
+      : configuredModel
+        ? catalog.find((m) => m.id === configuredModel)
+        : catalog[0];
 
     if (!chosen) {
       return {
@@ -103,8 +156,17 @@ export class ModelRouter {
       modelId: chosen.id,
       reason: explicitModel
         ? `Active provider is FreeLLMAPI; using the explicitly requested model '${chosen.id}'.`
-        : `Active provider is FreeLLMAPI; using the first model it reported ('${chosen.id}').`,
-      isAutomatic: !explicitModel,
+        : configuredModel
+          ? `Active provider is FreeLLMAPI; using the configured preferred model '${chosen.id}' from FREELLMAPI_MODEL.`
+          : preferredModel
+            ? // The operator configured a model FreeLLMAPI did not report. Say so
+              // explicitly rather than silently pretending the preference applied.
+              `Active provider is FreeLLMAPI; the configured preferred model '${preferredModel}' is not in the discovered model catalog, so the first model it reported ('${chosen.id}') was used.`
+            : `Active provider is FreeLLMAPI; using the first model it reported ('${chosen.id}').`,
+      // A configured FREELLMAPI_MODEL is a deliberate operator choice, so it is
+      // not "automatic" — the same as an explicit request. Only the
+      // first-discovered-model case is automatic.
+      isAutomatic: !explicitModel && !configuredModel,
       capabilities: {
         // null means "the provider did not advertise this" — reported as false
         // rather than assumed true.

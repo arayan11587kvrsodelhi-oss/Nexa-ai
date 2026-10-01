@@ -22,4 +22,18 @@ read-key.cjs
 # OS
 .DS_Store
 Thumbs.db
+
+# Local FreeLLMAPI runtime (freellmapi/). Only the launcher script and README
+# are tracked; the database, logs and any local key material are not. These
+# hold the unified API key and must never be committed.
+freellmapi/data/
+freellmapi/*.db
+freellmapi/*.db-shm
+freellmapi/*.db-wal
+freellmapi/*.sqlite
+freellmapi/*.sqlite3
+freellmapi/*.log
+freellmapi/.env
+freellmapi/.encryption-key
+
 .neon

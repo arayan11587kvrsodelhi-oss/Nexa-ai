@@ -30,6 +30,30 @@ if (TEST_DB.usable) {
 /** True only when a safe, explicitly-designated test database is available. */
 const LIVE_DB = TEST_DB.usable;
 
+/**
+ * The mail boundary is mocked, nothing else.
+ *
+ * `deliverPasswordReset` is the single function that would cross an external
+ * I/O boundary (SMTP / Resend / provider HTTP) once a real provider is wired.
+ * Today it is a stub that never leaves the process, but the test must not
+ * depend on that: if a provider were integrated later, this suite would start
+ * making real outbound requests. Mocking it here keeps the suite deterministic
+ * and network-independent, and lets the tests *inject* provider failures.
+ *
+ * Partial mock: every other export (`PASSWORD_RESET_GENERIC_MESSAGE`,
+ * `isProduction`, `buildPasswordResetUrl`, the path helpers) stays real, so the
+ * production/non-production branching and the URL-building logic under test are
+ * the real implementations.
+ */
+vi.mock("@/lib/auth/password-reset-mail", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/auth/password-reset-mail")>();
+
+  return {
+    ...actual,
+    deliverPasswordReset: vi.fn(async (_email: string): Promise<boolean> => false),
+  };
+});
+
 describe("reset tokens", () => {
   it("creates unique opaque tokens", () => {
     const seen = new Set(Array.from({ length: 50 }, () => PasswordResetTokenService.create()));
@@ -112,8 +136,47 @@ describe("mail abstraction", () => {
       expect(unk.status).toBe(200);
       expect(unkData.message).toBe(data.message);
       expect("developmentResetUrl" in unkData).toBe(false);
+
+      // --- mail-provider failure path -------------------------------------
+      // The provider is mocked, so this is a deterministic injected failure:
+      // no SMTP/HTTP request leaves the process. The route must absorb it and
+      // still return the same generic response, leaking nothing.
+      const mail = await import("@/lib/auth/password-reset-mail");
+      const deliver = vi.mocked(mail.deliverPasswordReset);
+      const SECRET_PROVIDER_DETAIL =
+        "smtp://mail.internal:587 user=postmaster pass=hunter2 ETIMEDOUT at /srv/nexa/mailer.js:42";
+      const anyRawToken = PasswordResetTokenService.create();
+      expect(deliver).toHaveBeenCalled();
+      deliver.mockRejectedValueOnce(new Error(SECRET_PROVIDER_DETAIL));
+      const fail = await forgot(new NextRequestClass("http://localhost/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": `prod-f-${tag}` },
+        body: JSON.stringify({ email }),
+      }));
+      const failText = await fail.text();
+      expect(fail.status).toBe(200);
+      // Identical generic response: a provider outage must not become an
+      // oracle for whether the account exists, nor a channel for details.
+      expect(JSON.parse(failText).message).toBe(data.message);
+      expect("developmentResetUrl" in JSON.parse(failText)).toBe(false);
+      // Nothing sensitive from the provider, the token, or the stack escapes.
+      for (const secret of [
+        SECRET_PROVIDER_DETAIL,
+        "smtp",
+        "pass=hunter2",
+        "mailer.js",
+        "ETIMEDOUT",
+        anyRawToken,
+        userId,
+        "token_hash",
+      ]) {
+        expect(failText.toLowerCase()).not.toContain(secret.toLowerCase());
+      }
+      expect(failText).not.toMatch(/at\s+\S+\.ts:\d+/); // no stack frames
+      expect(failText).not.toMatch(/Error:/); // no error class names
       const { POST: reset } = await import("@/app/api/auth/reset-password/route");
       const rawBad = PasswordResetTokenService.create();
+
       const bad = await reset(new NextRequestClass("http://localhost/api/auth/reset-password", {
         method: "POST",
         headers: { "content-type": "application/json", "x-forwarded-for": `prod-r-${tag}` },

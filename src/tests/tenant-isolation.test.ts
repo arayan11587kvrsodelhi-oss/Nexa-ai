@@ -71,19 +71,26 @@ vi.mock("@/db", () => ({
     update: () => ({ set: () => ({ where: async () => undefined }) }),
   },
 }));
-vi.mock("@/db/schema", () => ({
-  documents: {
-    id: "id",
-    userId: "user_id",
-    name: "name",
-    rawContent: "raw_content",
-    mimeType: "mime",
-    size: "size",
-    characterCount: "cc",
-    chunkCount: "chunks",
-  },
-  documentChunks: { name: "document_chunks" },
-}));
+// Partial mock: keep every real export (e.g. `toolCalls`, which the executor
+// uses for logging) and only override the tables this suite shapes by hand.
+vi.mock("@/db/schema", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/db/schema")>();
+
+  return {
+    ...actual,
+    documents: {
+      id: "id",
+      userId: "user_id",
+      name: "name",
+      rawContent: "raw_content",
+      mimeType: "mime",
+      size: "size",
+      characterCount: "cc",
+      chunkCount: "chunks",
+    },
+    documentChunks: { name: "document_chunks" },
+  };
+});
 
 const { ToolExecutor } = await import("@/lib/tools/executor");
 
